@@ -1,0 +1,90 @@
+﻿These are some notes I have for doing the kind of thing that happens in ScopedEditContext - except, I think the way it is done here actually works properly
+
+
+      When(f => f.MedicareAdvantageScope is MedicareAdvantageScopeOfAppointment && f.MedicareAdvantageScope.ProvidedDate.HasValue && f.MedicareAdvantageScope.ScopeDescription.HasValue, () =>
+      {
+        RuleFor(f => f.Lead.Detail.MedicareAdvantageEligibilityQuestion.IsEligibleForMedicare)
+          .Cascade(CascadeMode.StopOnFirstFailure)
+          .NotNull().WithMessage("An answer must be provided for \"Are you currently eligible for Medicare Part A and enrolled in Part B, or will you become eligible within the next six (6) months?\"")
+          .NotEmpty().WithMessage("An answer must be provided for \"Are you currently eligible for Medicare Part A and enrolled in Part B, or will you become eligible within the next six (6) months?\"")
+          .Equal(true)
+          //.WithSeverity(Severity.Warning)
+          .WithMessage("The customer must be eligible for Medicare Advantage Plans to proceed");
+
+        When(f => f.PreliminaryDesiredEffectiveDate < new DateTime(2021, 1, 1), () =>
+        {
+          RuleFor(f => f.Lead.Detail.MedicareAdvantageEligibilityQuestion.HasESRD)
+            .Cascade(CascadeMode.StopOnFirstFailure)
+            .NotNull().WithMessage("An answer must be provided for \"Do you have End Stage Renal Disease?\"")
+            .NotEmpty().WithMessage("An answer must be provided for \"Do you have End Stage Renal Disease?\"")
+            .Must(v => !v.Value)
+            .WithMessage(r =>
+            {
+              var message = "The current customer is ineligible for Medicare Advantage plans prior to January 1, 2021. Please change the desired effective date, or verify that all other data is correct.";
+              //if (r.Broker is null)
+              //{
+              //  message = "Customers with ESRD who still require dialysis are ineligible for Medicare Advantage plans prior to January 1, 2021. Please change the desired effective date, or verify that all other data is correct.";
+              //}
+              return message;
+            });
+        });
+      });
+	  
+	  
+	  
+	  
+	  
+	  
+	  
+	  
+	  
+	  
+	  --------------------THIS IF HUGE!!!!!!!!!!!----------------------------- SEE MedicareAdvantageRequirementsComponent
+	  
+    if (OuterEditContextMessageStore is null)
+    {
+      OuterEditContextMessageStore = new ValidationMessageStore(OuterEditContext);
+    }
+    OuterEditContextMessageStore.Clear(fi);
+    var asdf = OuterEditContext.GetValidationMessages(fi);
+    if (!result.IsValid)
+    {
+      OuterEditContextMessageStore.Add(fi, result.Errors.Where(e => e.Severity == Severity.Error).Select(e => $"Data Error: {e.ErrorMessage}"));
+    }
+	
+	
+	
+	-------------------------------------
+	
+  private void AdderssContextChanged(object sender, FieldChangedEventArgs e)
+  {
+    OuterEditContext.NotifyFieldChanged(e.FieldIdentifier);
+    if (e.FieldIdentifier.Model == Address)
+    {
+      var validator = new METSv2.Core.Domain.Validators.PhysicalAddressValidator();
+      if (InnerEditContextMessageStore is null)
+      {
+        InnerEditContextMessageStore = new ValidationMessageStore(AddressEditContext);
+      }
+      if (!wholeModelValidated)
+      {
+        InnerEditContextMessageStore.Clear(e.FieldIdentifier);
+        var results = validator.Validate(Address, v => v.IncludeProperties(e.FieldIdentifier.FieldName));
+        if (!results.IsValid)
+        {
+          InnerEditContextMessageStore.Add(e.FieldIdentifier, results.Errors.Select(e => e.ErrorMessage));
+        }
+      }
+      else
+      {
+        var fi = new FieldIdentifier(Address, "");
+        InnerEditContextMessageStore.Clear(e.FieldIdentifier);
+        InnerEditContextMessageStore.Clear(fi);
+        InnerEditContextMessageStore.Clear();
+        var results = validator.Validate(Address);
+        if (!results.IsValid)
+        {
+          InnerEditContextMessageStore.Add(fi, results.Errors.Select(e => e.ErrorMessage));
+        }
+      }
+    }

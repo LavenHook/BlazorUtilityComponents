@@ -1,0 +1,57 @@
+﻿These are some notes I have for doing the kind of thing that happens in ScopedEditContext - except, I think the way it is done here actually works properly
+
+[CascadingParameter]
+private EditContext OuterEditContext { get; set; }
+
+private EditContext InnerEditContext { get; set; }
+private ValidationMessageStore InnerEditContextMessageStore { get; set; }
+
+private FluentValidationValidator Validator { get; set; }
+
+private bool wholeVmValidationHasBeenRequested = false;
+private List<FieldIdentifier> validatedFieldIdentifiers { get; set; } = new List<FieldIdentifier>();
+
+private void FieldChanged(object sender, FieldChangedEventArgs e)
+{
+  if (e.FieldIdentifier.Model == ViewModel || e.FieldIdentifier.Model == Address)
+  {
+    //var fi = new FieldIdentifier(Address, e.FieldIdentifier.FieldName); //force the validator to look at/validate the corresponding Address-field
+    InnerEditContext.NotifyFieldChanged(e.FieldIdentifier);
+    var validator = new METSv2.Core.Domain.Validators.AddressValidator(); //this should be injected and resolved at the service level but nothing else is working right now
+                                                                          //InnerEditContextMessageStore.Clear(e.FieldIdentifier);
+    if (wholeVmValidationHasBeenRequested)
+    {
+      //it probably doesn't matter which field was edits because ALL the invalid fields currently have messages
+      InnerEditContextMessageStore.Clear();
+      InnerEditContextMessageStore.Clear(() => OuterEditContext.Model);
+      //for some reason the Clear function doesn't work if it was added witha fieldIdentifier
+      foreach (var fi in validatedFieldIdentifiers)
+      {
+        InnerEditContextMessageStore.Clear(new FieldIdentifier(OuterEditContext.Model, fi.FieldName));
+        InnerEditContextMessageStore.Clear(new FieldIdentifier(ViewModel, fi.FieldName));
+        InnerEditContextMessageStore.Clear(new FieldIdentifier(Address, fi.FieldName));
+        InnerEditContextMessageStore.Clear(fi); //this is jsut fucking stupid!
+      }
+      var result = validator.Validate(Address);
+      InnerEditContextMessageStore.Add(e.FieldIdentifier, result.Errors?.Select(v => v.ErrorMessage).Distinct());
+    }
+    else
+    {
+      InnerEditContextMessageStore.Clear(e.FieldIdentifier);
+      var result = validator.Validate(Address, e.FieldIdentifier.FieldName);
+      if (!validatedFieldIdentifiers.Contains(e.FieldIdentifier))
+      {
+        validatedFieldIdentifiers.Add(e.FieldIdentifier);
+      }
+      InnerEditContextMessageStore.Add(e.FieldIdentifier, result.Errors?.Where(v => string.Equals(v.PropertyName, e.FieldIdentifier.FieldName)).Select(v => v.ErrorMessage).Distinct());
+    }
+  }
+}
+
+private void ValidationRequested(object sender, ValidationRequestedEventArgs e)
+{
+  InnerEditContextMessageStore.Clear();
+  wholeVmValidationHasBeenRequested = true;
+  InnerEditContext.Validate(); //this really only displays the error messages - but will not prevent the page's validation from passing
+}
+}

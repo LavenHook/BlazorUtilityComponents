@@ -1,0 +1,142 @@
+﻿@implements IDisposable
+@using Microsoft.AspNetCore.Components.Forms
+@*TODO: only execute delegates if `InnerEditContext` != `ParentEditContext` *@
+
+<CascadingValue Value="InnerEditContext">
+  @ChildContent(InnerEditContext)
+</CascadingValue>
+
+@code {
+  [Parameter]
+  public RenderFragment<EditContext> ChildContent { get; set; }
+
+  [CascadingParameter]
+  private EditContext ParentEditContext { get; set; }
+
+  private ValidationMessageStore ParentValidationMessageStore { get; set; }
+
+  private EditContext InnerEditContext { get; set; }
+  private ValidationMessageStore InnerValidationMessageStore { get; set; }
+
+  //MUST have either model or another scope specified, done like in EditForm
+  [Parameter]
+  public object Model { get; set; }
+
+  private bool _hasSetEditContextExplicitly;
+
+  [Parameter]
+  public EditContext EditContext
+  {
+    get => InnerEditContext;
+    set
+    {
+      InnerEditContext = value;
+      _hasSetEditContextExplicitly = value != null;
+    }
+  }
+
+  public override async Task SetParametersAsync(ParameterView parameters)
+  {
+    // Keep a reference to the original values so we can check if they have changed
+    EditContext previousInnerEditContext = InnerEditContext;
+    EditContext previousParentEditContext = ParentEditContext;
+
+    await base.SetParametersAsync(parameters);
+    DoLikeEditForm();
+
+    // If the EditForm.Model changes then we get a new EditContext
+    // and need to hook it up
+    if (InnerEditContext != previousInnerEditContext)
+      InnerEditContextChanged(previousInnerEditContext);
+    if (ParentEditContext != previousParentEditContext)
+      ParentEditContextChanged(previousParentEditContext);
+  }
+
+  private void DoLikeEditForm()
+  {
+    if (_hasSetEditContextExplicitly && Model != null)
+    {
+      throw new InvalidOperationException($"{nameof(EditForm)} requires a {nameof(Model)} " +
+          $"parameter, or an {nameof(EditContext)} parameter, but not both.");
+    }
+    else if (!_hasSetEditContextExplicitly && Model == null)
+    {
+      throw new InvalidOperationException($"{nameof(EditForm)} requires either a {nameof(Model)} " +
+          $"parameter, or an {nameof(EditContext)} parameter, please provide one of these.");
+    }
+
+    // Update InnerEditContext if we don't have one yet, or if they are supplying a
+    // potentially new EditContext, or if they are supplying a different Model
+    if (Model != null && Model != InnerEditContext?.Model)
+    {
+      InnerEditContext = new EditContext(Model!);
+    }
+  }
+
+  private void ParentEditContextChanged(EditContext PreviousParentEditContext)
+  {
+    if (PreviousParentEditContext is EditContext)
+    {
+      PreviousParentEditContext.OnValidationRequested -= ParentContextValidationRequested;
+    }
+    if (ParentEditContext is EditContext && InnerEditContext != ParentEditContext)
+    {
+      ParentEditContext.OnValidationRequested += ParentContextValidationRequested;
+      ParentValidationMessageStore = new ValidationMessageStore(ParentEditContext);
+    }
+  }
+
+  private void InnerEditContextChanged(EditContext previousInnerEditContext)
+  {
+    if (previousInnerEditContext is EditContext)
+    {
+      previousInnerEditContext.OnFieldChanged -= InnerContextFieldChanged;
+    }
+    if (InnerEditContext is EditContext && InnerEditContext != ParentEditContext)
+    {
+      InnerEditContext.OnFieldChanged += InnerContextFieldChanged;
+      InnerValidationMessageStore = new ValidationMessageStore(InnerEditContext);
+    }
+  }
+
+  private void InnerContextFieldChanged(object sender, FieldChangedEventArgs e)
+  {
+    if (ParentEditContext != InnerEditContext)
+    {
+      ParentEditContext.NotifyFieldChanged(e.FieldIdentifier);
+      //add message if field is invalid?
+      var modelFieldIdentitier = new FieldIdentifier(Model, e.FieldIdentifier.FieldName);
+      ParentValidationMessageStore.Clear(modelFieldIdentitier);
+      var editedFieldMessaged = InnerEditContext.GetValidationMessages(e.FieldIdentifier);
+      if (editedFieldMessaged.Any())
+      {
+        ParentValidationMessageStore.Add(modelFieldIdentitier, editedFieldMessaged);
+      }
+    }
+  }
+
+  private void ParentContextValidationRequested(object sender, ValidationRequestedEventArgs e)
+  {
+    if (ParentEditContext.AddDataAnnotationsValidation() != InnerEditContext)
+    {
+      InnerValidationMessageStore.Clear();
+      if (!InnerEditContext.Validate())
+      {
+        //this will prevent the Parent from being 'valid', but will not describe to the Parent what fields are invalid - that implementation is up to the parent validator 
+        ParentValidationMessageStore.Add(new FieldIdentifier(Model, ""), InnerEditContext.GetValidationMessages());
+      }
+    }
+  }
+
+  void IDisposable.Dispose()
+  {
+    if (InnerEditContext is EditContext)
+    {
+      InnerEditContext.OnFieldChanged -= InnerContextFieldChanged;
+    }
+    if (ParentEditContext is EditContext)
+    {
+      ParentEditContext.OnValidationRequested -= ParentContextValidationRequested;
+    }
+  }
+}
